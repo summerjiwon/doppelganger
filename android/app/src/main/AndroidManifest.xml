@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="false"
+        android:label="Doppelganger"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Doppelganger">
+
+        <activity
+            android:name=".ReviewActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".MyWritingActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Android calls this only when notifications change. It is not a polling
+          service and it cannot grant itself access; the user grants access in
+          Android's notification-listener settings.
+        -->
+        <service
+            android:name=".capture.NotificationCaptureService"
+            android:exported="false"
+            android:label="Doppelganger 대화 알림 수집"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.notification.default_filter_types"
+                android:value="conversations|alerting" />
+            <meta-data
+                android:name="android.service.notification.disabled_filter_types"
+                android:value="ongoing|silent" />
+        </service>
+    </application>
+
+</manifest>
