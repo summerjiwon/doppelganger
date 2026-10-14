@@ -14,6 +14,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ReplySelectionUiTest {
+    @Test fun privateDialogsProtectTheirOwnWindow() {
+        ActivityScenario.launch(LocalReplyActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val dialog = android.app.AlertDialog.Builder(activity).setMessage("가상 예문").showPrivate()
+                try { assertTrue(requireNotNull(dialog.window).attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) }
+                finally { dialog.dismiss() }
+            }
+        }
+    }
+
     @Test fun selectionStartsExplicitAndCustomFieldFollowsIntent() {
         ActivityScenario.launch(LocalReplyActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->

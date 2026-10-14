@@ -1,6 +1,7 @@
 package com.sync.coach
 
 import android.app.ActivityManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -15,6 +16,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Spinner
+import android.widget.Toast
+import com.sync.coach.capture.PersonalWritingStore
+import com.sync.coach.reply.ExampleSelection
 import com.sync.coach.reply.Relationship
 import com.sync.coach.reply.ReplyIntent
 import com.sync.coach.reply.ReplyRequest
@@ -47,6 +51,9 @@ class LocalReplyActivity : PrivateActivity() {
     private lateinit var intent: Spinner
     private lateinit var customIntent: EditText
     private lateinit var selectionSummary: TextView
+    private lateinit var exampleButton: Button
+    private lateinit var manageExamples: Button
+    private val selectedExampleIds = linkedSetOf<String>()
     private lateinit var choose: Button
     private lateinit var load: Button
     private lateinit var generate: Button
@@ -65,7 +72,7 @@ class LocalReplyActivity : PrivateActivity() {
             textSize = 24f
         })
         layout.addView(TextView(this).apply {
-            text = "모델을 준비한 뒤 관계와 원하는 대응을 선택하세요. 받은 메시지를 기기 안에서 처리합니다. 지금은 관계별 기본 말투를 사용하며 내 예문 학습은 다음 단계입니다. 입력과 결과는 저장하지 않습니다."
+            text = "관계·의도를 고르고 내 말투 예문을 최대 5개 선택하세요. 선택한 예문에서 문장당 최대 120자를 말투 참고에 사용합니다. 새 입력과 생성 결과는 저장하지 않습니다."
         })
         status = TextView(this).apply { tag = "reply_status" }.also { layout.addView(it) }
         choose = Button(this).apply {
@@ -87,6 +94,15 @@ class LocalReplyActivity : PrivateActivity() {
             tag = "relationship"
             adapter = ArrayAdapter(this@LocalReplyActivity, android.R.layout.simple_spinner_dropdown_item,
                 listOf("관계 선택") + Relationship.entries.map { it.label })
+        }.also { layout.addView(it) }
+        exampleButton = Button(this).apply {
+            tag = "select_examples"
+            text = "내 말투 예문 선택 (0/5)"
+            setOnClickListener { selectExamples() }
+        }.also { layout.addView(it) }
+        manageExamples = Button(this).apply {
+            text = "내 예문 추가·관계 분류"
+            setOnClickListener { startActivity(Intent(this@LocalReplyActivity, MyWritingActivity::class.java)) }
         }.also { layout.addView(it) }
         layout.addView(TextView(this).apply { text = "원하는 답변 의도" })
         intent = Spinner(this).apply {
@@ -131,6 +147,10 @@ class LocalReplyActivity : PrivateActivity() {
         selectionSummary = TextView(this).also { layout.addView(it) }
         val selectionListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (parent === relationship) {
+                    selectedExampleIds.clear()
+                    updateButtons()
+                }
                 customIntent.visibility = if (intent.selectedItemPosition == ReplyIntent.CUSTOM.ordinal + 1) View.VISIBLE else View.GONE
                 clearPreview()
             }
@@ -146,6 +166,54 @@ class LocalReplyActivity : PrivateActivity() {
     override fun onStart() {
         super.onStart()
         visible = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (selectedExampleIds.isNotEmpty()) {
+            val selectedRelationship = Relationship.entries.getOrNull(relationship.selectedItemPosition - 1)
+            val valid = runCatching {
+                ExampleSelection.resolve(selectedExampleIds, PersonalWritingStore(this).listExamples(), requireNotNull(selectedRelationship))
+            }.isSuccess
+            if (!valid) {
+                selectedExampleIds.clear()
+                clearPreview()
+                status.text = "예문이 변경되었거나 읽을 수 없습니다. 다시 선택해주세요."
+            }
+        }
+        updateButtons()
+    }
+
+    private fun selectExamples() {
+        val selectedRelationship = Relationship.entries.getOrNull(relationship.selectedItemPosition - 1) ?: return
+        val examples = try {
+            PersonalWritingStore(this).listExamples().filter { it.relationship == selectedRelationship }
+        } catch (_: Exception) {
+            status.text = "말투 보관함을 읽을 수 없습니다. 기존 데이터는 유지됩니다."
+            return
+        }
+        if (examples.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("${selectedRelationship.label} 예문이 없습니다")
+                .setMessage("내 예문 추가·관계 분류에서 문장을 추가하거나 기존 미분류 문장의 관계를 지정하세요. 예문 없이도 기본 말투로 생성할 수 있습니다.")
+                .setPositiveButton("확인", null).showPrivate()
+            return
+        }
+        val staged = selectedExampleIds.toMutableSet().apply { retainAll(examples.map { it.id }.toSet()) }
+        AlertDialog.Builder(this).setTitle("${selectedRelationship.label} 예문 선택 · 최대 5개")
+            .setMultiChoiceItems(examples.map { it.text.take(120) }.toTypedArray(), BooleanArray(examples.size) { examples[it].id in staged }) { dialog, which, checked ->
+                val id = examples[which].id
+                if (!checked) staged.remove(id)
+                else if (staged.size < 5) staged.add(id)
+                else {
+                    (dialog as AlertDialog).listView.setItemChecked(which, false)
+                    Toast.makeText(this, "예문은 최대 5개까지 선택할 수 있습니다.", Toast.LENGTH_SHORT).show()
+                }
+            }.setPositiveButton("적용") { _, _ ->
+                selectedExampleIds.clear()
+                selectedExampleIds.addAll(staged)
+                clearPreview()
+                updateButtons()
+            }.setNegativeButton("취소", null).showPrivate()
     }
 
     @Deprecated("Uses the platform document picker to keep this experiment dependency-light")
@@ -225,7 +293,7 @@ class LocalReplyActivity : PrivateActivity() {
         val candidate = Engine(EngineConfig(
             modelPath = modelFile.absolutePath,
             backend = Backend.GPU(),
-            maxNumTokens = 2048,
+            maxNumTokens = 4096,
             cacheDir = cacheDir.absolutePath,
         ))
         try {
@@ -255,7 +323,15 @@ class LocalReplyActivity : PrivateActivity() {
             customIntent.error = "원하는 대응을 직접 입력하세요."
             return
         }
-        val request = ReplyRequest(text, Relationship.entries[relationship.selectedItemPosition - 1], selectedIntent, detail)
+        val selectedRelationship = Relationship.entries[relationship.selectedItemPosition - 1]
+        val examples = try {
+            if (selectedExampleIds.isEmpty()) emptyList() else
+                ExampleSelection.resolve(selectedExampleIds, PersonalWritingStore(this).listExamples(), selectedRelationship)
+        } catch (_: Exception) {
+            status.text = "선택한 예문을 확인할 수 없습니다. 예문을 다시 선택해주세요."
+            return
+        }
+        val request = ReplyRequest(text, selectedRelationship, selectedIntent, detail, examples)
         clearPreview()
         startWork("답변 생성 중…") {
             val currentEngine = requireNotNull(engine)
@@ -285,7 +361,7 @@ class LocalReplyActivity : PrivateActivity() {
                 runOnUiThread {
                     if (!isDestroyed && visible && !cancelled.get()) {
                         result.text = reviewed.text
-                        selectionSummary.text = "적용한 설정: ${request.relationship.label} · ${request.intent.label}" +
+                        selectionSummary.text = "적용한 설정: ${request.relationship.label} · ${request.intent.label} · 내 예문 ${request.styleExamples.size}개" +
                             if (reviewed.usedFallback) "\n제공하지 않은 사유 표현이 감지돼 기본 거절문을 표시했습니다." else ""
                     }
                 }
@@ -317,6 +393,9 @@ class LocalReplyActivity : PrivateActivity() {
         intent.isEnabled = !busy
         customIntent.isEnabled = !busy
         input.isEnabled = !busy
+        exampleButton.isEnabled = !busy && relationship.selectedItemPosition > 0
+        exampleButton.text = "내 말투 예문 선택 (${selectedExampleIds.size}/5)"
+        manageExamples.isEnabled = !busy
         choose.isEnabled = !busy
         load.isEnabled = !busy && modelFile.exists() && !ready
         generate.isEnabled = !busy && ready
