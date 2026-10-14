@@ -1,6 +1,5 @@
 package com.sync.coach
 
-import android.app.Activity
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -12,7 +11,7 @@ import android.widget.Toast
 import com.sync.coach.capture.PersonalWritingStore
 
 /** Explicit, user-controlled seed data for personal tone matching. */
-class MyWritingActivity : Activity() {
+class MyWritingActivity : PrivateActivity() {
     private lateinit var writingStore: PersonalWritingStore
     private lateinit var countLabel: TextView
 
@@ -39,6 +38,7 @@ class MyWritingActivity : Activity() {
         page.addView(countLabel)
 
         val input = EditText(this).apply {
+            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
             hint = "예시\n오늘은 좀 피곤해서 이따 답할게 ㅠㅠ\n오키 그럼 토요일에 보자!\n확인했습니다. 오후까지 공유드리겠습니다."
             gravity = Gravity.TOP or Gravity.START
             minLines = 7
@@ -53,7 +53,10 @@ class MyWritingActivity : Activity() {
         page.addView(Button(this).apply {
             text = "내 말투 데이터로 저장"
             setOnClickListener {
-                val added = writingStore.addLines(input.text.toString())
+                val added = try { writingStore.addLines(input.text.toString()) } catch (_: Exception) {
+                    Toast.makeText(this@MyWritingActivity, "저장하지 못했습니다. 입력과 기존 데이터는 유지됩니다.", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
                 if (added == 0) {
                     Toast.makeText(this@MyWritingActivity, "저장할 문장을 입력해주세요.", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
@@ -68,6 +71,7 @@ class MyWritingActivity : Activity() {
     }
 
     private fun renderCount() {
-        countLabel.text = "현재 내 말투 데이터: ${writingStore.count()}개 문장"
+        countLabel.text = runCatching { "현재 내 말투 데이터: ${writingStore.count()}개 문장" }
+            .getOrDefault("말투 보관함을 읽을 수 없습니다. 기존 데이터는 유지됩니다.")
     }
 }

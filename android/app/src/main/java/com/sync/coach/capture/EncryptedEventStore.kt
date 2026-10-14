@@ -4,8 +4,11 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.AtomicFile
 import java.io.File
+import java.io.IOException
 import java.security.KeyStore
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -22,28 +25,29 @@ class EncryptedEventStore(
     private val maxRecords: Int = DEFAULT_MAX_RECORDS,
     private val retentionMillis: Long = DEFAULT_RETENTION_MILLIS
 ) {
-    private val lock = Any()
     private val storeFile = File(context.filesDir, fileName)
+    private val lock = locks.getOrPut(storeFile.absolutePath) { Any() }
+    private val atomicFile = AtomicFile(storeFile)
+
+    init { require(maxRecords > 0 && retentionMillis >= 0) }
 
     fun append(message: CapturedMessage) = synchronized(lock) {
-        pruneExpiredLocked(System.currentTimeMillis())
-        storeFile.parentFile?.mkdirs()
-        storeFile.appendText(encrypt(message.toJson()) + "\n", Charsets.UTF_8)
-        trimToMaxRecordsLocked()
+        val retained = liveRecords(System.currentTimeMillis())
+        if (retained.any { it.second.id == message.id }) return@synchronized
+        rewriteLocked(retained.takeLast(maxRecords - 1).map { it.first } + encrypt(message.toJson()))
     }
 
     fun loadRecent(): List<CapturedMessage> = synchronized(lock) {
         pruneExpiredLocked(System.currentTimeMillis())
-        return readAllLocked().sortedByDescending(CapturedMessage::receivedAt)
+        return readRecordsLocked().map { it.second }.sortedByDescending(CapturedMessage::receivedAt)
     }
 
     fun clear() = synchronized(lock) {
-        if (storeFile.exists()) storeFile.delete()
+        atomicFile.delete()
     }
 
     fun remove(messageId: String) = synchronized(lock) {
-        if (!storeFile.exists()) return@synchronized
-        val retained = readAllLocked().filterNot { it.id == messageId }.map { encrypt(it.toJson()) }
+        val retained = readRecordsLocked().filterNot { it.second.id == messageId }.map { it.first }
         rewriteLocked(retained)
     }
 
@@ -51,40 +55,40 @@ class EncryptedEventStore(
         pruneExpiredLocked(System.currentTimeMillis())
     }
 
-    private fun readAllLocked(): List<CapturedMessage> {
-        if (!storeFile.exists()) return emptyList()
-        return storeFile.useLines { lines ->
-            lines.mapNotNull { line -> decrypt(line)?.let(CapturedMessage::fromJson) }.toList()
+    private fun readRecordsLocked(): List<Pair<String, CapturedMessage>> {
+        if (!storeFile.exists() && !File(storeFile.path + ".bak").exists()) return emptyList()
+        return try {
+            atomicFile.openRead().bufferedReader(Charsets.UTF_8).useLines { lines ->
+                lines.filter { it.isNotBlank() }.map { it to CapturedMessage.fromJson(decrypt(it)) }.toList()
+            }
+        } catch (_: Exception) {
+            // Preserve the original file on corruption or key loss. Never print raw records.
+            throw IOException("암호화 보관함을 읽을 수 없습니다. 원본 파일은 유지됩니다.")
         }
     }
+
+    private fun liveRecords(now: Long) = readRecordsLocked().filter {
+        now - it.second.receivedAt <= retentionMillis
+    }.takeLast(maxRecords)
 
     private fun pruneExpiredLocked(now: Long) {
-        if (!storeFile.exists()) return
-        val retained = storeFile.useLines { lines ->
-            lines.mapNotNull { line ->
-                decrypt(line)?.let(CapturedMessage::fromJson)
-                    ?.takeIf { now - it.receivedAt <= retentionMillis }
-                    ?.let { encrypt(it.toJson()) }
-            }.toList()
-        }
-        rewriteLocked(retained.takeLast(maxRecords))
-    }
-
-    private fun trimToMaxRecordsLocked() {
-        if (!storeFile.exists()) return
-        val lines = storeFile.readLines(Charsets.UTF_8)
-        if (lines.size > maxRecords) rewriteLocked(lines.takeLast(maxRecords))
+        val records = readRecordsLocked()
+        val retained = records.filter { now - it.second.receivedAt <= retentionMillis }.takeLast(maxRecords)
+        if (retained.size != records.size) rewriteLocked(retained.map { it.first })
     }
 
     private fun rewriteLocked(lines: List<String>) {
         if (lines.isEmpty()) {
-            storeFile.delete()
+            atomicFile.delete()
             return
         }
-        val temporary = File(storeFile.parentFile, "$fileName.tmp")
-        temporary.writeText(lines.joinToString(separator = "\n", postfix = "\n"), Charsets.UTF_8)
-        if (!temporary.renameTo(storeFile)) {
-            temporary.delete()
+        val output = atomicFile.startWrite()
+        try {
+            output.write(lines.joinToString(separator = "\n", postfix = "\n").toByteArray(Charsets.UTF_8))
+            atomicFile.finishWrite(output)
+        } catch (failure: Exception) {
+            atomicFile.failWrite(output)
+            throw failure
         }
     }
 
@@ -95,21 +99,22 @@ class EncryptedEventStore(
         return "${Base64.encodeToString(cipher.iv, Base64.NO_WRAP)}.${Base64.encodeToString(encrypted, Base64.NO_WRAP)}"
     }
 
-    private fun decrypt(record: String): String? = runCatching {
+    private fun decrypt(record: String): String {
         val parts = record.split('.', limit = 2)
         require(parts.size == 2)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
-            getOrCreateKey(),
+            KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }.getKey(keyAlias, null) as? SecretKey
+                ?: throw IOException("암호화 키를 확인할 수 없습니다."),
             GCMParameterSpec(GCM_TAG_LENGTH_BITS, Base64.decode(parts[0], Base64.NO_WRAP))
         )
-        String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
-    }.getOrNull()
+        return String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
+    }
 
-    private fun getOrCreateKey(): SecretKey {
+    private fun getOrCreateKey(): SecretKey = synchronized(keyLock) {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
-        (keyStore.getKey(keyAlias, null) as? SecretKey)?.let { return it }
+        (keyStore.getKey(keyAlias, null) as? SecretKey)?.let { return@synchronized it }
 
         val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE)
         val spec = KeyGenParameterSpec.Builder(
@@ -120,10 +125,12 @@ class EncryptedEventStore(
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .build()
         keyGenerator.init(spec)
-        return keyGenerator.generateKey()
+        keyGenerator.generateKey()
     }
 
     private companion object {
+        val locks = ConcurrentHashMap<String, Any>()
+        val keyLock = Any()
         const val DEFAULT_FILE_NAME = "sync_pending_messages.v1"
         const val DEFAULT_KEY_ALIAS = "sync_pending_messages_key_v1"
         const val ANDROID_KEY_STORE = "AndroidKeyStore"

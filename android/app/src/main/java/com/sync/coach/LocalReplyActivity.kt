@@ -1,6 +1,5 @@
 package com.sync.coach
 
-import android.app.Activity
 import android.app.ActivityManager
 import android.content.Intent
 import android.net.Uri
@@ -25,7 +24,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** A foreground-only inference experiment. No captured messages are read here. */
-class LocalReplyActivity : Activity() {
+class LocalReplyActivity : PrivateActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val cancelled = AtomicBoolean(false)
     private val nativeLock = Any()
@@ -72,6 +71,7 @@ class LocalReplyActivity : Activity() {
             setOnClickListener { loadModel() }
         }.also { layout.addView(it) }
         input = EditText(this).apply {
+            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
             hint = "예: 친구에게 오늘 약속을 미루자고 답하고 싶어. 짧고 부드럽게 써줘."
             minLines = 3
             filters = arrayOf(InputFilter.LengthFilter(1000))
@@ -164,7 +164,7 @@ class LocalReplyActivity : Activity() {
                 }
             }
             check(!cancelled.get())
-            require(hasModelHeader(partial))
+            ModelIntegrity.verify(partial) { cancelled.get() }
             check(partial.renameTo(modelFile))
             "모델 파일 준비됨 · 불러오기를 눌러주세요."
         } finally {
@@ -172,10 +172,10 @@ class LocalReplyActivity : Activity() {
         }
     }
 
-    private fun loadModel() = startWork("모델 불러오는 중… 최초 실행은 시간이 걸릴 수 있습니다.") {
+    private fun loadModel() = startWork("모델 무결성 확인 및 로딩 중… 잠시 기다려주세요.") {
         releaseEngine()
-        require(hasModelHeader(modelFile))
         val started = SystemClock.elapsedRealtime()
+        ModelIntegrity.verify(modelFile) { cancelled.get() || !visible }
         Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
         val candidate = Engine(EngineConfig(
             modelPath = modelFile.absolutePath,
@@ -238,14 +238,6 @@ class LocalReplyActivity : Activity() {
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(info)
         val processMb = android.os.Debug.getPss() / 1024
         return "앱 PSS 약 ${processMb}MB / 기기 가용 ${info.availMem / 1024 / 1024}MB"
-    }
-
-    private fun hasModelHeader(file: File): Boolean {
-        if (!file.isFile) return false
-        return file.inputStream().use { source ->
-            val header = ByteArray(8)
-            source.read(header) == 8 && header.contentEquals("LITERTLM".toByteArray(Charsets.US_ASCII))
-        }
     }
 
     private fun cancelWork() {

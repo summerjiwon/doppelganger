@@ -52,7 +52,8 @@ class NotificationCaptureService : NotificationListenerService() {
         )
 
         // No logs, analytics, network requests, or automatic reply occur here.
-        EncryptedEventStore(applicationContext).append(message)
+        // A damaged inbox must not be replaced or bring down the listener.
+        runCatching { EncryptedEventStore(applicationContext).append(message) }
     }
 
     private companion object {
