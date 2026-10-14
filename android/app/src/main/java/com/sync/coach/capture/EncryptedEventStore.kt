@@ -55,6 +55,13 @@ class EncryptedEventStore(
         pruneExpiredLocked(System.currentTimeMillis())
     }
 
+    fun replace(message: CapturedMessage): Boolean = synchronized(lock) {
+        val records = readRecordsLocked()
+        if (records.none { it.second.id == message.id }) return@synchronized false
+        rewriteLocked(records.map { if (it.second.id == message.id) encrypt(message.toJson()) else it.first })
+        true
+    }
+
     private fun readRecordsLocked(): List<Pair<String, CapturedMessage>> {
         if (!storeFile.exists() && !File(storeFile.path + ".bak").exists()) return emptyList()
         return try {
