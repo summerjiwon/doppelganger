@@ -7,6 +7,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ScrollView
 import androidx.core.app.NotificationManagerCompat
 import com.sync.coach.capture.ApprovedMessageStore
 import com.sync.coach.capture.CaptureSettings
@@ -78,8 +79,12 @@ class MainActivity : Activity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, MyWritingActivity::class.java)) }
         })
         status = TextView(this).apply { textSize = 16f }
+        layout.addView(Button(this).apply {
+            text = "로컬 AI 답변 테스트"
+            setOnClickListener { startActivity(Intent(this@MainActivity, LocalReplyActivity::class.java)) }
+        })
         layout.addView(status)
-        setContentView(layout)
+        setContentView(ScrollView(this).apply { addView(layout) })
     }
 
     override fun onResume() {
