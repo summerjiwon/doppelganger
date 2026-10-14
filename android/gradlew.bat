@@ -9,4 +9,4 @@ if defined JAVA_HOME (
 )
 
 "%JAVA_EXE%" "-Dorg.gradle.appname=%~n0" -classpath "%APP_HOME%gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*
-endlocal
+endlocal & exit /b %ERRORLEVEL%

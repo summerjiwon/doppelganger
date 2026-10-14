@@ -140,8 +140,8 @@ export default function ChatWorkspace({
       addMessageToSession(activeSession.id, assistantMessage, autoTitle);
 
       onRefreshSessions();
-    } catch (error) {
-      console.error('Failed to generate response:', error);
+    } catch {
+      console.error('Failed to generate response');
       showToast('대화 분석 중 오류가 발생했습니다.');
     } finally {
       setIsGenerating(false);
@@ -860,7 +860,7 @@ export default function ChatWorkspace({
               <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>로컬 저장 및 보안 정책</h3>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.55' }}>
-              <p>🔒 <strong>내 브라우저(로컬) 보관:</strong> 모든 대화 내역은 외부 서버가 아닌 사용자의 브라우저(LocalStorage)에만 안전하게 보관됩니다.</p>
+              <p><strong>브라우저에 보관:</strong> 이 웹 프로토타입의 대화는 LocalStorage에 암호화 없이 저장됩니다. 같은 브라우저 프로필을 사용하는 사람이 접근할 수 있습니다. Android 앱의 암호화 보관함과는 별개입니다.</p>
               <p>🧹 <strong>스마트 노이즈 필터링:</strong> 카카오톡 날짜 구분선(--- 2026년 ... ---), 시스템 메시지 등은 분석 시 자동으로 필터링됩니다.</p>
               <p>✨ <strong>완전한 통제권:</strong> 사이드바에서 언제든 원하는 대화를 이름 변경하거나 즉시 삭제할 수 있습니다.</p>
             </div>

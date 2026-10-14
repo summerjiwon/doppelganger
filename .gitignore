@@ -28,3 +28,13 @@ android/.gradle/
 android/.build-logs/
 android/build/
 android/app/build/
+*.litertlm
+*.litertlm.part
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+tmp/

@@ -67,12 +67,13 @@ export function getAllSessions() {
         ]
       }));
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(migrated));
+      localStorage.removeItem('sync_chat_sessions_v1');
       return migrated;
     }
 
     return [];
-  } catch (e) {
-    console.error('Failed to load sessions from LocalStorage:', e);
+  } catch {
+    console.error('Failed to load sessions from LocalStorage');
     return [];
   }
 }
@@ -95,8 +96,8 @@ export function createNewSession(initialTitle = '새 대화') {
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
     setStoredActiveSessionId(newSession.id);
-  } catch (e) {
-    console.error('Failed to create new session:', e);
+  } catch {
+    console.error('Failed to create new session');
   }
   return newSession;
 }
@@ -136,8 +137,8 @@ export function saveSession(session) {
 
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
     return updated;
-  } catch (e) {
-    console.error('Failed to save session:', e);
+  } catch {
+    console.error('Failed to save session');
     return getAllSessions();
   }
 }
@@ -178,8 +179,8 @@ export function addMessageToSession(sessionId, message, autoTitle = null) {
       };
       return saveSession(newSess);
     }
-  } catch (e) {
-    console.error('Failed to add message to session:', e);
+  } catch {
+    console.error('Failed to add message to session');
     return getAllSessions();
   }
 }
@@ -237,6 +238,7 @@ export function deleteSession(id) {
  */
 export function clearAllSessions() {
   localStorage.removeItem(SESSIONS_KEY);
+  localStorage.removeItem('sync_chat_sessions_v1');
   setStoredActiveSessionId(null);
 }
 

@@ -7,6 +7,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ScrollView
 import androidx.core.app.NotificationManagerCompat
 import com.sync.coach.capture.ApprovedMessageStore
 import com.sync.coach.capture.CaptureSettings
@@ -78,8 +79,12 @@ class MainActivity : Activity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, MyWritingActivity::class.java)) }
         })
         status = TextView(this).apply { textSize = 16f }
+        layout.addView(Button(this).apply {
+            text = "로컬 AI 답변 테스트"
+            setOnClickListener { startActivity(Intent(this@MainActivity, LocalReplyActivity::class.java)) }
+        })
         layout.addView(status)
-        setContentView(layout)
+        setContentView(ScrollView(this).apply { addView(layout) })
     }
 
     override fun onResume() {
@@ -90,13 +95,13 @@ class MainActivity : Activity() {
     private fun renderStatus() {
         val permission = isNotificationAccessGranted()
         val capture = settings.isCaptureEnabled
-        val recordCount = store.loadRecent().size
+        val recordCount = runCatching { store.loadRecent().size.toString() }.getOrDefault("확인 필요")
         status.text = buildString {
             append("알림 접근 권한: ").append(if (permission) "허용됨" else "허용 필요")
             append("\n카카오톡 수집: ").append(if (capture) "켜짐" else "꺼짐")
             append("\n암호화된 임시 메시지: ").append(recordCount).append("개")
-            append("\n사용자 승인 분석 대상: ").append(approvedStore.count()).append("개")
-            append("\n내 말투 학습 문장: ").append(personalWritingStore.count()).append("개")
+            append("\n사용자 승인 분석 대상: ").append(runCatching { approvedStore.count().toString() }.getOrDefault("확인 필요")).append("개")
+            append("\n내 말투 학습 문장: ").append(runCatching { personalWritingStore.count().toString() }.getOrDefault("확인 필요")).append("개")
             if (!permission) append("\n\n먼저 Android 설정에서 Doppelganger의 알림 접근을 허용해주세요.")
         }
     }
