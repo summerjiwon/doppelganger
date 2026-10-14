@@ -38,7 +38,7 @@
 - Android assembleDebug, assembleDebugAndroidTest, lintDebug 통과. 정적 검사는 오류 0개, 기존 경고는 남아 있다.
 - Android 기기 테스트 7개 추가: 동시 저장/중복 방지, 손상 원본 유지, 키 분실 원본 유지, 백업 복구, 올바른 해시, 같은 크기의 변조 파일 거부, 임의 파일/취소 거부.
 - Android JVM 테스트 실행기에서 테스트 클래스 로딩 오류가 있어, Android Keystore 테스트와 함께 실기기 instrumentation 테스트로 구성했다. CI는 테스트 APK 컴파일까지 검증하고 실제 실행은 연결 기기에서 수행한다.
-- 실기기 실행 결과: USB 디버깅 재승인 대기. 실행 완료 후 이 항목을 갱신한다.
+- 실기기 실행 결과: USB 디버깅 재승인 후 SM-S938N / Android 16에서 `connectedDebugAndroidTest` 실행. 7개 테스트 모두 통과(실패 0개). 가상 데이터 전용 저장소와 키를 사용해 실제 사용자 대화·키를 변경하지 않았다.
 - 주요 비밀 키 패턴 검색에서 일치 파일은 발견되지 않았다. 모든 비밀정보 부재를 보장하는 검사는 아니다.
 
 의존성 권고: https://github.com/advisories/GHSA-68fv-2mgg-jv7q
