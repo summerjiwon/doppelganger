@@ -8,7 +8,8 @@ data class CapturedMessage(
     val sourcePackage: String,
     val sender: String?,
     val text: String,
-    val receivedAt: Long
+    val receivedAt: Long,
+    val relationship: String? = null,
 ) {
     fun toJson(): String = JSONObject()
         .put("id", id)
@@ -16,6 +17,7 @@ data class CapturedMessage(
         .put("sender", sender)
         .put("text", text)
         .put("receivedAt", receivedAt)
+        .put("relationship", relationship ?: JSONObject.NULL)
         .toString()
 
     companion object {
@@ -26,7 +28,8 @@ data class CapturedMessage(
                 sourcePackage = value.getString("sourcePackage"),
                 sender = value.optString("sender").takeIf { it.isNotBlank() },
                 text = value.getString("text"),
-                receivedAt = value.getLong("receivedAt")
+                receivedAt = value.getLong("receivedAt"),
+                relationship = if (value.isNull("relationship")) null else value.optString("relationship").takeIf { it.isNotBlank() },
             )
         }
     }

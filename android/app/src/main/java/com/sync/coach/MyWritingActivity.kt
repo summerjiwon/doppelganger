@@ -1,7 +1,8 @@
 package com.sync.coach
 
-import android.app.Activity
 import android.os.Bundle
+import android.content.Intent
+import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
@@ -9,10 +10,13 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import com.sync.coach.capture.PersonalWritingStore
+import com.sync.coach.reply.Relationship
 
 /** Explicit, user-controlled seed data for personal tone matching. */
-class MyWritingActivity : Activity() {
+class MyWritingActivity : PrivateActivity() {
     private lateinit var writingStore: PersonalWritingStore
     private lateinit var countLabel: TextView
 
@@ -37,8 +41,20 @@ class MyWritingActivity : Activity() {
 
         countLabel = TextView(this).apply { textSize = 14f }
         page.addView(countLabel)
+        val relationship = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MyWritingActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("미분류") + Relationship.entries.map { it.label })
+        }
+        page.addView(TextView(this).apply { text = "이 문장들을 사용한 관계" })
+        page.addView(relationship)
+        page.addView(Button(this).apply {
+            text = "저장된 예문 분류·삭제"
+            setOnClickListener { startActivity(Intent(this@MyWritingActivity, WritingExamplesActivity::class.java)) }
+        })
 
         val input = EditText(this).apply {
+            filters = arrayOf(InputFilter.LengthFilter(10_000))
+            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
             hint = "예시\n오늘은 좀 피곤해서 이따 답할게 ㅠㅠ\n오키 그럼 토요일에 보자!\n확인했습니다. 오후까지 공유드리겠습니다."
             gravity = Gravity.TOP or Gravity.START
             minLines = 7
@@ -53,7 +69,10 @@ class MyWritingActivity : Activity() {
         page.addView(Button(this).apply {
             text = "내 말투 데이터로 저장"
             setOnClickListener {
-                val added = writingStore.addLines(input.text.toString())
+                val added = try { writingStore.addLines(input.text.toString(), Relationship.entries.getOrNull(relationship.selectedItemPosition - 1)) } catch (_: Exception) {
+                    Toast.makeText(this@MyWritingActivity, "저장하지 못했습니다. 입력과 기존 데이터는 유지됩니다.", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
                 if (added == 0) {
                     Toast.makeText(this@MyWritingActivity, "저장할 문장을 입력해주세요.", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
@@ -68,6 +87,12 @@ class MyWritingActivity : Activity() {
     }
 
     private fun renderCount() {
-        countLabel.text = "현재 내 말투 데이터: ${writingStore.count()}개 문장"
+        countLabel.text = runCatching { "현재 내 말투 데이터: ${writingStore.count()}개 문장" }
+            .getOrDefault("말투 보관함을 읽을 수 없습니다. 기존 데이터는 유지됩니다.")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::countLabel.isInitialized) renderCount()
     }
 }

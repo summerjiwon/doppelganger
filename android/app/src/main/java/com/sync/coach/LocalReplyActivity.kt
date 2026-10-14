@@ -1,17 +1,27 @@
 package com.sync.coach
 
-import android.app.Activity
 import android.app.ActivityManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.text.InputFilter
+import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Spinner
+import android.widget.Toast
+import com.sync.coach.capture.PersonalWritingStore
+import com.sync.coach.reply.ExampleSelection
+import com.sync.coach.reply.Relationship
+import com.sync.coach.reply.ReplyIntent
+import com.sync.coach.reply.ReplyRequest
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Conversation
@@ -25,7 +35,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** A foreground-only inference experiment. No captured messages are read here. */
-class LocalReplyActivity : Activity() {
+class LocalReplyActivity : PrivateActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val cancelled = AtomicBoolean(false)
     private val nativeLock = Any()
@@ -37,6 +47,13 @@ class LocalReplyActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var result: TextView
     private lateinit var input: EditText
+    private lateinit var relationship: Spinner
+    private lateinit var intent: Spinner
+    private lateinit var customIntent: EditText
+    private lateinit var selectionSummary: TextView
+    private lateinit var exampleButton: Button
+    private lateinit var manageExamples: Button
+    private val selectedExampleIds = linkedSetOf<String>()
     private lateinit var choose: Button
     private lateinit var load: Button
     private lateinit var generate: Button
@@ -55,9 +72,9 @@ class LocalReplyActivity : Activity() {
             textSize = 24f
         })
         layout.addView(TextView(this).apply {
-            text = "Gemma E2B GPU용 .litertlm 파일을 선택하세요. 약 2GB를 앱에 복사합니다. 받은 메시지를 직접 입력하면 기기 안에서 답변 초안을 만듭니다. 이 화면의 입력과 결과는 저장하지 않습니다."
+            text = "관계·의도를 고르고 내 말투 예문을 최대 5개 선택하세요. 선택한 예문에서 문장당 최대 120자를 말투 참고에 사용합니다. 새 입력과 생성 결과는 저장하지 않습니다."
         })
-        status = TextView(this).also { layout.addView(it) }
+        status = TextView(this).apply { tag = "reply_status" }.also { layout.addView(it) }
         choose = Button(this).apply {
             text = "모델 파일 선택"
             setOnClickListener {
@@ -68,16 +85,49 @@ class LocalReplyActivity : Activity() {
             }
         }.also { layout.addView(it) }
         load = Button(this).apply {
+            tag = "load_model"
             text = "모델 불러오기"
             setOnClickListener { loadModel() }
         }.also { layout.addView(it) }
+        layout.addView(TextView(this).apply { text = "상대와의 관계" })
+        relationship = Spinner(this).apply {
+            tag = "relationship"
+            adapter = ArrayAdapter(this@LocalReplyActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("관계 선택") + Relationship.entries.map { it.label })
+        }.also { layout.addView(it) }
+        exampleButton = Button(this).apply {
+            tag = "select_examples"
+            text = "내 말투 예문 선택 (0/5)"
+            setOnClickListener { selectExamples() }
+        }.also { layout.addView(it) }
+        manageExamples = Button(this).apply {
+            text = "내 예문 추가·관계 분류"
+            setOnClickListener { startActivity(Intent(this@LocalReplyActivity, MyWritingActivity::class.java)) }
+        }.also { layout.addView(it) }
+        layout.addView(TextView(this).apply { text = "원하는 답변 의도" })
+        intent = Spinner(this).apply {
+            tag = "reply_intent"
+            adapter = ArrayAdapter(this@LocalReplyActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("의도 선택") + ReplyIntent.entries.map { it.label })
+        }.also { layout.addView(it) }
+        customIntent = EditText(this).apply {
+            tag = "custom_intent"
+            hint = "예: 오늘은 어렵지만 대화는 이어가고 싶어."
+            filters = arrayOf(InputFilter.LengthFilter(300))
+            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            visibility = View.GONE
+        }.also { layout.addView(it) }
+        layout.addView(TextView(this).apply { text = "받은 메시지" })
         input = EditText(this).apply {
-            hint = "예: 친구에게 오늘 약속을 미루자고 답하고 싶어. 짧고 부드럽게 써줘."
+            tag = "incoming_message"
+            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            hint = "예: 오늘 저녁에 시간 있어?"
             minLines = 3
             filters = arrayOf(InputFilter.LengthFilter(1000))
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }.also { layout.addView(it) }
         generate = Button(this).apply {
+            tag = "generate_reply"
             text = "답변 생성"
             setOnClickListener { generateReply() }
         }.also { layout.addView(it) }
@@ -90,9 +140,24 @@ class LocalReplyActivity : Activity() {
             }
         }.also { layout.addView(it) }
         result = TextView(this).apply {
+            tag = "reply_result"
             textSize = 18f
             setTextIsSelectable(true)
         }.also { layout.addView(it) }
+        selectionSummary = TextView(this).also { layout.addView(it) }
+        val selectionListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (parent === relationship) {
+                    selectedExampleIds.clear()
+                    updateButtons()
+                }
+                customIntent.visibility = if (intent.selectedItemPosition == ReplyIntent.CUSTOM.ordinal + 1) View.VISIBLE else View.GONE
+                clearPreview()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        relationship.onItemSelectedListener = selectionListener
+        intent.onItemSelectedListener = selectionListener
         setContentView(ScrollView(this).apply { addView(layout) })
         status.text = if (modelFile.exists()) "모델 파일 준비됨 · 불러오기를 눌러주세요." else "모델 파일 선택 필요"
         updateButtons()
@@ -101,6 +166,54 @@ class LocalReplyActivity : Activity() {
     override fun onStart() {
         super.onStart()
         visible = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (selectedExampleIds.isNotEmpty()) {
+            val selectedRelationship = Relationship.entries.getOrNull(relationship.selectedItemPosition - 1)
+            val valid = runCatching {
+                ExampleSelection.resolve(selectedExampleIds, PersonalWritingStore(this).listExamples(), requireNotNull(selectedRelationship))
+            }.isSuccess
+            if (!valid) {
+                selectedExampleIds.clear()
+                clearPreview()
+                status.text = "예문이 변경되었거나 읽을 수 없습니다. 다시 선택해주세요."
+            }
+        }
+        updateButtons()
+    }
+
+    private fun selectExamples() {
+        val selectedRelationship = Relationship.entries.getOrNull(relationship.selectedItemPosition - 1) ?: return
+        val examples = try {
+            PersonalWritingStore(this).listExamples().filter { it.relationship == selectedRelationship }
+        } catch (_: Exception) {
+            status.text = "말투 보관함을 읽을 수 없습니다. 기존 데이터는 유지됩니다."
+            return
+        }
+        if (examples.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("${selectedRelationship.label} 예문이 없습니다")
+                .setMessage("내 예문 추가·관계 분류에서 문장을 추가하거나 기존 미분류 문장의 관계를 지정하세요. 예문 없이도 기본 말투로 생성할 수 있습니다.")
+                .setPositiveButton("확인", null).showPrivate()
+            return
+        }
+        val staged = selectedExampleIds.toMutableSet().apply { retainAll(examples.map { it.id }.toSet()) }
+        AlertDialog.Builder(this).setTitle("${selectedRelationship.label} 예문 선택 · 최대 5개")
+            .setMultiChoiceItems(examples.map { it.text.take(120) }.toTypedArray(), BooleanArray(examples.size) { examples[it].id in staged }) { dialog, which, checked ->
+                val id = examples[which].id
+                if (!checked) staged.remove(id)
+                else if (staged.size < 5) staged.add(id)
+                else {
+                    (dialog as AlertDialog).listView.setItemChecked(which, false)
+                    Toast.makeText(this, "예문은 최대 5개까지 선택할 수 있습니다.", Toast.LENGTH_SHORT).show()
+                }
+            }.setPositiveButton("적용") { _, _ ->
+                selectedExampleIds.clear()
+                selectedExampleIds.addAll(staged)
+                clearPreview()
+                updateButtons()
+            }.setNegativeButton("취소", null).showPrivate()
     }
 
     @Deprecated("Uses the platform document picker to keep this experiment dependency-light")
@@ -164,7 +277,7 @@ class LocalReplyActivity : Activity() {
                 }
             }
             check(!cancelled.get())
-            require(hasModelHeader(partial))
+            ModelIntegrity.verify(partial) { cancelled.get() }
             check(partial.renameTo(modelFile))
             "모델 파일 준비됨 · 불러오기를 눌러주세요."
         } finally {
@@ -172,15 +285,15 @@ class LocalReplyActivity : Activity() {
         }
     }
 
-    private fun loadModel() = startWork("모델 불러오는 중… 최초 실행은 시간이 걸릴 수 있습니다.") {
+    private fun loadModel() = startWork("모델 무결성 확인 및 로딩 중… 잠시 기다려주세요.") {
         releaseEngine()
-        require(hasModelHeader(modelFile))
         val started = SystemClock.elapsedRealtime()
+        ModelIntegrity.verify(modelFile) { cancelled.get() || !visible }
         Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
         val candidate = Engine(EngineConfig(
             modelPath = modelFile.absolutePath,
             backend = Backend.GPU(),
-            maxNumTokens = 2048,
+            maxNumTokens = 4096,
             cacheDir = cacheDir.absolutePath,
         ))
         try {
@@ -201,13 +314,30 @@ class LocalReplyActivity : Activity() {
 
     private fun generateReply() {
         val text = input.text.toString().trim()
-        if (text.isEmpty()) { input.error = "메시지 또는 답변 요청을 입력하세요."; return }
-        result.text = ""
+        if (relationship.selectedItemPosition == 0) { status.text = "상대와의 관계를 선택하세요."; return }
+        if (intent.selectedItemPosition == 0) { status.text = "원하는 답변 의도를 선택하세요."; return }
+        if (text.isEmpty()) { input.error = "받은 메시지를 입력하세요."; return }
+        val selectedIntent = ReplyIntent.entries[intent.selectedItemPosition - 1]
+        val detail = customIntent.text.toString().trim()
+        if (selectedIntent == ReplyIntent.CUSTOM && detail.isEmpty()) {
+            customIntent.error = "원하는 대응을 직접 입력하세요."
+            return
+        }
+        val selectedRelationship = Relationship.entries[relationship.selectedItemPosition - 1]
+        val examples = try {
+            if (selectedExampleIds.isEmpty()) emptyList() else
+                ExampleSelection.resolve(selectedExampleIds, PersonalWritingStore(this).listExamples(), selectedRelationship)
+        } catch (_: Exception) {
+            status.text = "선택한 예문을 확인할 수 없습니다. 예문을 다시 선택해주세요."
+            return
+        }
+        val request = ReplyRequest(text, selectedRelationship, selectedIntent, detail, examples)
+        clearPreview()
         startWork("답변 생성 중…") {
             val currentEngine = requireNotNull(engine)
             val started = SystemClock.elapsedRealtime()
             val conversation = currentEngine.createConversation(ConversationConfig(
-                systemInstruction = Contents.of("한국어 메신저 답변 작성 도우미입니다. 사용자의 요청에 맞는 짧은 답변 초안 하나만 작성하세요. 설명을 붙이지 말고, 주어지지 않은 일정이나 사실을 만들지 마세요."),
+                systemInstruction = Contents.of(request.systemInstruction()),
                 maxOutputToken = 192,
                 thinkingConfig = ThinkingConfig(enableThinking = false),
             ))
@@ -216,7 +346,7 @@ class LocalReplyActivity : Activity() {
                     activeConversation = conversation
                     check(!cancelled.get())
                 }
-                conversation.sendMessage(text).toString()
+                conversation.sendMessage(request.userMessage()).toString()
             } finally {
                 synchronized(nativeLock) {
                     activeConversation = null
@@ -227,7 +357,14 @@ class LocalReplyActivity : Activity() {
                 "생성이 취소되었습니다."
             } else {
                 check(answer.isNotBlank())
-                runOnUiThread { if (!isDestroyed && visible && !cancelled.get()) result.text = answer }
+                val reviewed = request.reviewDraft(answer)
+                runOnUiThread {
+                    if (!isDestroyed && visible && !cancelled.get()) {
+                        result.text = reviewed.text
+                        selectionSummary.text = "적용한 설정: ${request.relationship.label} · ${request.intent.label} · 내 예문 ${request.styleExamples.size}개" +
+                            if (reviewed.usedFallback) "\n제공하지 않은 사유 표현이 감지돼 기본 거절문을 표시했습니다." else ""
+                    }
+                }
                 "생성 완료 · ${SystemClock.elapsedRealtime() - started}ms · ${memoryInfo()}"
             }
         }
@@ -238,14 +375,6 @@ class LocalReplyActivity : Activity() {
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(info)
         val processMb = android.os.Debug.getPss() / 1024
         return "앱 PSS 약 ${processMb}MB / 기기 가용 ${info.availMem / 1024 / 1024}MB"
-    }
-
-    private fun hasModelHeader(file: File): Boolean {
-        if (!file.isFile) return false
-        return file.inputStream().use { source ->
-            val header = ByteArray(8)
-            source.read(header) == 8 && header.contentEquals("LITERTLM".toByteArray(Charsets.US_ASCII))
-        }
     }
 
     private fun cancelWork() {
@@ -260,10 +389,22 @@ class LocalReplyActivity : Activity() {
     }
 
     private fun updateButtons() {
+        relationship.isEnabled = !busy
+        intent.isEnabled = !busy
+        customIntent.isEnabled = !busy
+        input.isEnabled = !busy
+        exampleButton.isEnabled = !busy && relationship.selectedItemPosition > 0
+        exampleButton.text = "내 말투 예문 선택 (${selectedExampleIds.size}/5)"
+        manageExamples.isEnabled = !busy
         choose.isEnabled = !busy
         load.isEnabled = !busy && modelFile.exists() && !ready
         generate.isEnabled = !busy && ready
         cancel.isEnabled = busy
+    }
+
+    private fun clearPreview() {
+        result.text = ""
+        selectionSummary.text = ""
     }
 
     override fun onStop() {

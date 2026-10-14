@@ -43,8 +43,8 @@ export async function copyTextToClipboard(text) {
     const successful = document.execCommand('copy');
     document.body.removeChild(textArea);
     return successful;
-  } catch (err) {
-    console.error('execCommand copy failed:', err);
+  } catch {
+    console.error('execCommand copy failed');
     return false;
   }
 }

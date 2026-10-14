@@ -3,12 +3,14 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="false"
         android:label="Doppelganger"
         android:supportsRtl="true"
         android:theme="@style/Theme.Doppelganger">
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <uses-native-library android:name="libOpenCL.so" android:required="false" />
         <activity android:name=".LocalReplyActivity" android:exported="false" />
+        <activity android:name=".WritingExamplesActivity" android:exported="false" />
 
         <activity
             android:name=".ReviewActivity"

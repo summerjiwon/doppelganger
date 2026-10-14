@@ -1,6 +1,5 @@
 package com.sync.coach
 
-import android.app.Activity
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -17,7 +16,7 @@ import java.util.Date
  * A deliberate privacy boundary: notification records must be reviewed here
  * before they become retained analysis context.
  */
-class ReviewActivity : Activity() {
+class ReviewActivity : PrivateActivity() {
     private lateinit var pendingStore: EncryptedEventStore
     private lateinit var approvedStore: ApprovedMessageStore
     private lateinit var list: LinearLayout
@@ -57,7 +56,10 @@ class ReviewActivity : Activity() {
 
     private fun renderMessages() {
         list.removeAllViews()
-        val messages = pendingStore.loadRecent()
+        val messages = try { pendingStore.loadRecent() } catch (_: Exception) {
+            list.addView(TextView(this).apply { text = "보관함을 읽을 수 없습니다. 기존 데이터는 유지됩니다." })
+            return
+        }
         if (messages.isEmpty()) {
             list.addView(TextView(this).apply {
                 text = "검토할 임시 메시지가 없습니다."
@@ -97,8 +99,13 @@ class ReviewActivity : Activity() {
             addView(Button(this@ReviewActivity).apply {
                 text = "분석 대상으로 저장"
                 setOnClickListener {
-                    approvedStore.promote(message)
-                    pendingStore.remove(message.id)
+                    try {
+                        approvedStore.promote(message)
+                        pendingStore.remove(message.id)
+                    } catch (_: Exception) {
+                        Toast.makeText(this@ReviewActivity, "저장하지 못했습니다. 보관함을 확인해주세요.", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
                     Toast.makeText(this@ReviewActivity, "분석 대상에 저장했습니다.", Toast.LENGTH_SHORT).show()
                     renderMessages()
                 }

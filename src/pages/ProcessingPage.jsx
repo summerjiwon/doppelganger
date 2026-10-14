@@ -55,8 +55,8 @@ export default function ProcessingPage() {
             replace: true
           });
         }, 1600);
-      } catch (error) {
-        console.error('AI Analysis failed:', error);
+      } catch {
+        console.error('AI Analysis failed');
         clearInterval(interval);
         navigate('/', { state: { error: '분석에 실패했습니다. 다시 시도해주세요.' }, replace: true });
       }
