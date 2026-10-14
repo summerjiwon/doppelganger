@@ -28,3 +28,5 @@ android/.gradle/
 android/.build-logs/
 android/build/
 android/app/build/
+*.litertlm
+*.litertlm.part
